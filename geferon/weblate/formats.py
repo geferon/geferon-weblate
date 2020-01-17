@@ -6,6 +6,7 @@ import vdf
 import pycountry
 import chardet
 import codecs
+import io
 
 from itertools import chain
 
@@ -61,6 +62,8 @@ class VDFItem(object):
     def getid(self):
         return self.key
 
+defaultCodec = 'UTF-16-LE'
+
 vdfTranslationBase = vdf.VDFDict()
 vdfTranslationBase['lang'] = vdf.VDFDict()
 vdfTranslationBase['lang']['Language'] = 'English' # TODO
@@ -82,11 +85,11 @@ class VDFSerializer(object):
         for unit in self.units:
             file_base['lang']['Tokens'][unit.key] = unit.text
 
-        vdf.dump(file_base, handle, pretty=True)
+        file_content = vdf.dump(file_base, handle, pretty=True)
 
 
 class VDFParser(object):
-    codec = 'UTF-16-LE'
+    codec = defaultCodec
 
     def __init__(self, storefile):
         if not isinstance(storefile, six.string_types):
@@ -96,10 +99,18 @@ class VDFParser(object):
 
         with open(storefile, 'rb') as handle:
             rawdata = handle.read()
-            result = chardet.detect(rawdata)
-            self.codec = result['encoding']
-            self.content = rawdata.decode(self.codec)
-            self.parsed = vdf.loads(self.content)
+
+            # First let's try the default codec, which is the normally supported by Valve games
+            try:
+                self.content = rawdata.decode(defaultCodec)
+            except: # if it fails, let's find out what codec it has
+                result = chardet.detect(rawdata)
+                self.codec = result['encoding']
+                if self.codec.lower() == 'ascii': # If it's ascii, convert automatically to UTF-8, as UTF-8 is completely valid for ASCII
+                    self.codec = 'utf-8'
+                self.content = rawdata.decode(self.codec)
+
+            self.parsed = vdf.parse(io.StringIO(self.content))
 
         self.units = list(
             VDFItem(itemKey, itemValue) for itemKey, itemValue in self.parsed['lang']['Tokens'].items()
@@ -176,7 +187,9 @@ class VdfFormat(TranslationFormat):
 
     @classmethod
     def get_new_file_content(cls):
-        return vdf.dumps(cls.new_translation, pretty=True)
+        sample_text = vdf.dumps(cls.new_translation, pretty=True)
+        sample_bytes = codecs.encode(sample_text, defaultCodec)
+        return sample_bytes
 
     @classmethod
     def create_new_file(cls, filename, language, base):
@@ -186,9 +199,9 @@ class VdfFormat(TranslationFormat):
         elif cls.new_translation is None:
             raise ValueError('Not supported')
         else:
-            store = cls.get_new_file_content()
+            store = cls.load(vdf.dumps(cls.new_translation)) # Copy translation obj
 
-        with open(filename, 'wb') as handle:
+        with codecs.open(filename, 'w', store.codec if base else defaultCodec) as handle:
             # vdf.dump(store, handle, pretty=True)
             VDFSerializer(store.units, language)(handle)
 
