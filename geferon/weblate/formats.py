@@ -13,11 +13,28 @@ from itertools import chain
 from django.apps import AppConfig
 
 from django.utils.functional import cached_property
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
-from weblate.formats.base import TranslationFormat, TranslationUnit, move_atomic
+from weblate.formats.base import TranslationFormat, TranslationUnit
 from weblate.utils.errors import report_error
 
+def move_atomic(source, target):
+    """Tries to perform atomic move.
+
+    This is tricky on Windows as until Python 3.3 there is no
+    function for that. And even on Python 3.3 the MoveFileEx
+    is not guarateed to be atomic, so it might fail in some cases.
+    Anyway we try to choose best available method.
+    """
+    # Use os.replace if available
+    if sys.version_info >= (3, 3):
+        os.replace(source, target)
+    else:
+        # Remove target on Windows if exists
+        if sys.platform == 'win32' and os.path.exists(target):
+            os.unlink(target)
+        # Use os.rename
+        os.rename(source, target)
 
 class VDFUnit(TranslationUnit):
     @cached_property
